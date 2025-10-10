@@ -12,13 +12,13 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #define BUF 1024
-#define PORT 6543
 
 ///////////////////////////////////////////////////////////////////////////////
 
 int abortRequested = 0;
 int create_socket = -1;
 int new_socket = -1;
+char *mailSpoolDir = NULL;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -27,11 +27,29 @@ void signalHandler(int sig);
 
 ///////////////////////////////////////////////////////////////////////////////
 
-int main(void)
+int main(int argc, char **argv)
 {
    socklen_t addrlen;
    struct sockaddr_in address, cliaddress;
    int reuseValue = 1;
+   int port;
+
+   ////////////////////////////////////////////////////////////////////////////
+   // CHECK ARGUMENTS
+   if (argc != 3)
+   {
+      fprintf(stderr, "Usage: %s <port> <mail-spool-directoryname>\n", argv[0]);
+      return EXIT_FAILURE;
+   }
+
+   port = atoi(argv[1]);
+   if (port <= 0 || port > 65535)
+   {
+      fprintf(stderr, "Error: Invalid port number\n");
+      return EXIT_FAILURE;
+   }
+
+   mailSpoolDir = argv[2];
 
    ////////////////////////////////////////////////////////////////////////////
    // SIGNAL HANDLER
@@ -86,7 +104,7 @@ int main(void)
    memset(&address, 0, sizeof(address));
    address.sin_family = AF_INET;
    address.sin_addr.s_addr = INADDR_ANY;
-   address.sin_port = htons(PORT);
+   address.sin_port = htons(port);
 
    ////////////////////////////////////////////////////////////////////////////
    // ASSIGN AN ADDRESS WITH PORT TO SOCKET

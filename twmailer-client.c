@@ -12,7 +12,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #define BUF 1024
-#define PORT 6543
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -23,6 +22,22 @@ int main(int argc, char **argv)
    struct sockaddr_in address;
    int size;
    int isQuit;
+   int port;
+
+   ////////////////////////////////////////////////////////////////////////////
+   // CHECK ARGUMENTS
+   if (argc != 3)
+   {
+      fprintf(stderr, "Usage: %s <ip> <port>\n", argv[0]);
+      return EXIT_FAILURE;
+   }
+
+   port = atoi(argv[2]);
+   if (port <= 0 || port > 65535)
+   {
+      fprintf(stderr, "Error: Invalid port number\n");
+      return EXIT_FAILURE;
+   }
 
    ////////////////////////////////////////////////////////////////////////////
    // CREATE A SOCKET
@@ -42,15 +57,12 @@ int main(int argc, char **argv)
    memset(&address, 0, sizeof(address)); // init storage with 0
    address.sin_family = AF_INET;         // IPv4
    // https://man7.org/linux/man-pages/man3/htons.3.html
-   address.sin_port = htons(PORT);
+   address.sin_port = htons(port);
    // https://man7.org/linux/man-pages/man3/inet_aton.3.html
-   if (argc < 2)
+   if (inet_aton(argv[1], &address.sin_addr) == 0)
    {
-      inet_aton("127.0.0.1", &address.sin_addr);
-   }
-   else
-   {
-      inet_aton(argv[1], &address.sin_addr);
+      fprintf(stderr, "Error: Invalid IP address\n");
+      return EXIT_FAILURE;
    }
 
    ////////////////////////////////////////////////////////////////////////////
