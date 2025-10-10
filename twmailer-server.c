@@ -184,7 +184,7 @@ void *clientCommunication(void *data)
 
    ////////////////////////////////////////////////////////////////////////////
    // SEND welcome message
-   strcpy(buffer, "Welcome to myserver!\r\nPlease enter your commands...\r\n");
+   strcpy(buffer, "Welcome to TWMailer!\r\n");
    if (send(*current_socket, buffer, strlen(buffer), 0) == -1)
    {
       perror("send failed");
@@ -215,7 +215,7 @@ void *clientCommunication(void *data)
          break;
       }
 
-      // remove ugly debug message, because of the sent newline of client
+      // remove newline
       if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
       {
          size -= 2;
@@ -226,14 +226,59 @@ void *clientCommunication(void *data)
       }
 
       buffer[size] = '\0';
-      printf("Message received: %s\n", buffer); // ignore error
+      printf("Command received: %s\n", buffer); // ignore error
 
-      if (send(*current_socket, "OK", 3, 0) == -1)
+      // COMMAND PARSING AB HIER
+      if (strcmp(buffer, "SEND") == 0)
       {
-         perror("send answer failed");
-         return NULL;
+         // TODO: SEND
+         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         {
+            perror("send answer failed");
+            return NULL;
+         }
       }
-   } while (strcmp(buffer, "quit") != 0 && !abortRequested);
+      else if (strcmp(buffer, "LIST") == 0)
+      {
+         // TODO: LIST
+         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         {
+            perror("send answer failed");
+            return NULL;
+         }
+      }
+      else if (strcmp(buffer, "READ") == 0)
+      {
+         // TODO: READ
+         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         {
+            perror("send answer failed");
+            return NULL;
+         }
+      }
+      else if (strcmp(buffer, "DEL") == 0)
+      {
+         // TODO: DEL
+         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         {
+            perror("send answer failed");
+            return NULL;
+         }
+      }
+      else if (strcmp(buffer, "QUIT") == 0)
+      {
+         printf("Client requested QUIT\n");
+         break;
+      }
+      else
+      {
+         if (send(*current_socket, "ERR\n", 4, 0) == -1)
+         {
+            perror("send answer failed");
+            return NULL;
+         }
+      }
+   } while (!abortRequested);
 
    // closes/frees the descriptor if not already
    if (*current_socket != -1)
