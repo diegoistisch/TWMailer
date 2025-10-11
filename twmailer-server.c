@@ -30,6 +30,7 @@ void signalHandler(int sig);
 int handleSend(int socket);
 int handleList(int socket);
 int handleRead(int socket);
+int handleDel(int socket);
 int getNextMessageNumber(const char *userDir);
 ssize_t readline(int fd, void *buffer, size_t n);
 
@@ -269,11 +270,12 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "DEL") == 0)
       {
-         // TODO: DEL
-         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         if (handleDel(*current_socket) == -1)
          {
-            perror("send answer failed");
-            return NULL;
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
          }
       }
       else if (strcmp(buffer, "QUIT") == 0)
@@ -737,6 +739,94 @@ int handleRead(int socket)
 
    fclose(file);
    printf("Message %d sent to client (user: %s)\n", messageNum, username);
+   return 0;
+}
+
+
+// DEL command handler
+// Format: DEL\nusername\nmessage-number\n
+// Löscht eine spezifische Nachricht
+int handleDel(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   char filePath[300];
+   int messageNum;
+   int size;
+
+   
+   // Receive username
+   size = readline(socket, buffer, BUF - 1);
+   if (size <= 0)
+   {
+      perror("readline username failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (size > 0 && buffer[size - 1] == '\n')
+   {
+      buffer[size - 1] = '\0';
+      size--;
+   }
+
+   // prüfe username (max 8 characters)
+   if (size > 8 || size == 0)
+   {
+      fprintf(stderr, "Invalid username length: %d\n", size);
+      return -1;
+   }
+   strncpy(username, buffer, sizeof(username) - 1);
+   username[sizeof(username) - 1] = '\0';
+   printf("DEL command for user: %s\n", username);
+
+   
+   // lese message number
+   size = readline(socket, buffer, BUF - 1);
+   if (size <= 0)
+   {
+      perror("readline message number failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (size > 0 && buffer[size - 1] == '\n')
+   {
+      buffer[size - 1] = '\0';
+      size--;
+   }
+
+   messageNum = atoi(buffer);
+   if (messageNum <= 0)
+   {
+      fprintf(stderr, "Invalid message number: %s\n", buffer);
+      return -1;
+   }
+
+   printf("Attempting to delete message %d for user %s\n", messageNum, username);
+
+   
+   // Build file path
+   snprintf(filePath, sizeof(filePath), "%s/%s/%d.txt", mailSpoolDir, username, messageNum);
+
+   
+   // Versuche die Datei zu löschen
+   if (unlink(filePath) == -1)
+   {
+      perror("unlink failed - message not found or cannot be deleted");
+      return -1;
+   }
+
+   printf("Message %d deleted successfully for user %s\n", messageNum, username);
+
+   
+   // Send OK wenn es funktioniert hat
+   if (send(socket, "OK\n", 3, 0) == -1)
+   {
+      perror("send OK failed");
+      return -1;
+   }
+
    return 0;
 }
 

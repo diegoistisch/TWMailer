@@ -19,6 +19,7 @@
 int handleSendCommand(int socket);
 int handleListCommand(int socket);
 int handleReadCommand(int socket);
+int handleDelCommand(int socket);
 ssize_t readline(int fd, void *vptr, size_t maxlen);
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -156,6 +157,17 @@ int main(int argc, char **argv)
             if (handleReadCommand(create_socket) == -1)
             {
                fprintf(stderr, "<< READ command failed\n");
+            }
+            continue; // Skip normal command processing
+         }
+
+         //////////////////////////////////////////////////////////////////////
+         // Check if DEL command
+         if (strcmp(buffer, "DEL") == 0)
+         {
+            if (handleDelCommand(create_socket) == -1)
+            {
+               fprintf(stderr, "<< DEL command failed\n");
             }
             continue; // Skip normal command processing
          }
@@ -571,6 +583,107 @@ int handleReadCommand(int socket)
    }
 
    return 0;
+}
+
+// DEL command handler
+// Löscht eine spezifische Nachricht
+int handleDelCommand(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   char messageNum[10];
+   int size;
+
+   
+   // Send DEL command
+   if (send(socket, "DEL\n", 4, 0) == -1)
+   {
+      perror("send DEL command failed");
+      return -1;
+   }
+
+   
+   // Get username
+   printf("Username: ");
+   if (fgets(username, sizeof(username), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading username\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(username);
+   if (username[size - 1] == '\n')
+   {
+      username[size - 1] = '\0';
+      size--;
+   }
+
+   // username prüfen
+   if (size == 0 || size > 8)
+   {
+      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
+      return -1;
+   }
+
+   // Send username
+   snprintf(buffer, sizeof(buffer), "%s\n", username);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send username failed");
+      return -1;
+   }
+
+   
+   // Get message number
+   printf("Message number: ");
+   if (fgets(messageNum, sizeof(messageNum), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading message number\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(messageNum);
+   if (messageNum[size - 1] == '\n')
+   {
+      messageNum[size - 1] = '\0';
+   }
+
+   // Send message number
+   snprintf(buffer, sizeof(buffer), "%s\n", messageNum);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send message number failed");
+      return -1;
+   }
+
+   
+   // Receive response
+   size = readline(socket, buffer, BUF - 1);
+   if (size == -1)
+   {
+      perror("readline response failed");
+      return -1;
+   }
+   else if (size == 0)
+   {
+      printf("Server closed connection\n");
+      return -1;
+   }
+
+   // Print response
+   printf("<< %s", buffer);
+
+   // Check if OK or ERR
+   if (strncmp(buffer, "OK", 2) == 0)
+   {
+      return 0; // Success
+   }
+   else
+   {
+      return -1; // Error
+   }
 }
 
 // readline() - Stevens Implementation from PDF
