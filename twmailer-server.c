@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <errno.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -24,6 +27,8 @@ char *mailSpoolDir = NULL;
 
 void *clientCommunication(void *data);
 void signalHandler(int sig);
+int handleSend(int socket);
+int getNextMessageNumber(const char *userDir);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -231,11 +236,12 @@ void *clientCommunication(void *data)
       // COMMAND PARSING AB HIER
       if (strcmp(buffer, "SEND") == 0)
       {
-         // TODO: SEND
-         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         if (handleSend(*current_socket) == -1)
          {
-            perror("send answer failed");
-            return NULL;
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
          }
       }
       else if (strcmp(buffer, "LIST") == 0)
@@ -295,6 +301,205 @@ void *clientCommunication(void *data)
    }
 
    return NULL;
+}
+
+
+//  funktion um die nächste nachrichtennummer für einen benutzer zu bekommen
+int getNextMessageNumber(const char *userDir)
+{
+   DIR *dir;
+   struct dirent *entry;
+   int maxNum = 0;
+   int currentNum;
+
+   dir = opendir(userDir);
+   if (dir == NULL)
+   {
+      return 1; 
+   }
+
+   while ((entry = readdir(dir)) != NULL)
+   {
+      // Check ob filename format "number.txt"
+      if (sscanf(entry->d_name, "%d.txt", &currentNum) == 1)
+      {
+         if (currentNum > maxNum)
+         {
+            maxNum = currentNum;
+         }
+      }
+   }
+
+   closedir(dir);
+   return maxNum + 1;
+}
+
+
+// funktion um den SEND command zu verarbeiten
+// format:
+// SEND
+// username
+// subject
+// message (mehrere zeilen)
+// .
+int handleSend(int socket)
+{
+   char buffer[BUF];
+   char username[9]; // Max 8 characters + null terminator
+   char subject[81]; // Max 80 characters + null terminator
+   char message[BUF * 10]; // um längere nachrichten zu erlauben
+   char userDir[256];
+   char filePath[300];
+   int size;
+   FILE *file;
+   int messageNum;
+
+   memset(message, 0, sizeof(message));
+
+   // Receive username
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size <= 0)
+   {
+      perror("recv username failed");
+      return -1;
+   }
+   
+   // Remove newline
+   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   {
+      size -= 2;
+   }
+   else if (buffer[size - 1] == '\n')
+   {
+      --size;
+   }
+   buffer[size] = '\0';
+
+   // Validate username (max 8 characters)
+   if (size > 8 || size == 0)
+   {
+      fprintf(stderr, "Invalid username length: %d\n", size);
+      return -1;
+   }
+   strncpy(username, buffer, sizeof(username) - 1);
+   username[sizeof(username) - 1] = '\0';
+   printf("Username: %s\n", username);
+
+   // Receive subject
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size <= 0)
+   {
+      perror("recv subject failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   {
+      size -= 2;
+   }
+   else if (buffer[size - 1] == '\n')
+   {
+      --size;
+   }
+   buffer[size] = '\0';
+
+   // Validate subject (max 80 characters)
+   if (size > 80 || size == 0)
+   {
+      fprintf(stderr, "Invalid subject length: %d\n", size);
+      return -1;
+   }
+   strncpy(subject, buffer, sizeof(subject) - 1);
+   subject[sizeof(subject) - 1] = '\0';
+   printf("Subject: %s\n", subject);
+
+   // 
+   int messageLen = 0;
+   while (1)
+   {
+      size = recv(socket, buffer, BUF - 1, 0);
+      if (size <= 0)
+      {
+         perror("recv message failed");
+         return -1;
+      }
+
+      // Remove newline
+      if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+      {
+         size -= 2;
+      }
+      else if (buffer[size - 1] == '\n')
+      {
+         --size;
+      }
+      buffer[size] = '\0';
+
+      // Ccheckt für den End-of-message Marker
+      if (strcmp(buffer, ".") == 0)
+      {
+         break;
+      }
+
+      // nachricht anhaengen
+      if (messageLen + size + 1 < (int)sizeof(message))
+      {
+         if (messageLen > 0)
+         {
+            message[messageLen++] = '\n';
+         }
+         strncpy(message + messageLen, buffer, sizeof(message) - messageLen - 1);
+         messageLen += size;
+      }
+      else
+      {
+         fprintf(stderr, "Message too long\n");
+         return -1;
+      }
+   }
+   printf("Message received (%d bytes)\n", messageLen);
+
+   // Falls Benutzerverzeichnis noch nicht existiert, wird es erstellt
+   snprintf(userDir, sizeof(userDir), "%s/%s", mailSpoolDir, username);
+   
+   // Create directory mit permissions 0700
+   if (mkdir(userDir, 0700) == -1)
+   {
+      if (errno != EEXIST)
+      {
+         perror("mkdir failed");
+         return -1;
+      }
+   }
+
+   
+   messageNum = getNextMessageNumber(userDir);
+   
+   // erstellt file path
+   snprintf(filePath, sizeof(filePath), "%s/%d.txt", userDir, messageNum);
+
+   // schreibt ins file
+   file = fopen(filePath, "w");
+   if (file == NULL)
+   {
+      perror("fopen failed");
+      return -1;
+   }
+
+   // formatiert nachricht im file
+   fprintf(file, "%s\n%s\n%s\n", username, subject, message);
+   fclose(file);
+
+   printf("Message saved to: %s\n", filePath);
+
+   if (send(socket, "OK\n", 3, 0) == -1)
+   {
+      perror("send OK failed");
+      return -1;
+   }
+
+   return 0;
 }
 
 void signalHandler(int sig)

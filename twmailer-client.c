@@ -15,6 +15,10 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
+int handleSendCommand(int socket);
+
+///////////////////////////////////////////////////////////////////////////////
+
 int main(int argc, char **argv)
 {
    int create_socket;
@@ -116,7 +120,20 @@ int main(int argc, char **argv)
             --size;
             buffer[size] = 0;
          }
-         isQuit = strcmp(buffer, "quit") == 0;
+         
+         isQuit = strcmp(buffer, "QUIT") == 0;
+
+         //////////////////////////////////////////////////////////////////////
+         // Check if SEND command
+         if (strcmp(buffer, "SEND") == 0)
+         {
+            // Handle SEND command specially
+            if (handleSendCommand(create_socket) == -1)
+            {
+               fprintf(stderr, "<< SEND command failed\n");
+            }
+            continue; // Skip normal command processing
+         }
 
          //////////////////////////////////////////////////////////////////////
          // SEND DATA
@@ -164,12 +181,7 @@ int main(int argc, char **argv)
          else
          {
             buffer[size] = '\0';
-            printf("<< %s\n", buffer); // ignore error
-            if (strcmp("OK", buffer) != 0)
-            {
-               fprintf(stderr, "<< Server error occured, abort\n");
-               break;
-            }
+            printf("<< %s", buffer); // ignore error
          }
       }
    } while (!isQuit);
@@ -191,4 +203,141 @@ int main(int argc, char **argv)
    }
 
    return EXIT_SUCCESS;
+}
+
+// Verarbeitet den SEND command zwischen  user und server
+int handleSendCommand(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   char subject[81];
+   char line[BUF];
+   int size;
+
+   // überprüft ob socket gültig ist
+   if (send(socket, "SEND\n", 5, 0) == -1)
+   {
+      perror("send SEND command failed");
+      return -1;
+   }
+
+   // schickt username des empfängers
+   printf("Username (max 8 characters): ");
+   if (fgets(username, sizeof(username), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading username\n");
+      return -1;
+   }
+
+   // löscht newline
+   size = strlen(username);
+   if (username[size - 1] == '\n')
+   {
+      username[size - 1] = '\0';
+      size--;
+   }
+
+   // prüft Länge des username
+   if (size == 0 || size > 8)
+   {
+      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
+      return -1;
+   }
+
+   // Sendet den username
+   snprintf(buffer, sizeof(buffer), "%s\n", username);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send username failed");
+      return -1;
+   }
+
+   // betreff vom user
+   printf("Subject (max 80 characters): ");
+   if (fgets(subject, sizeof(subject), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading subject\n");
+      return -1;
+   }
+
+   // löscht newline
+   size = strlen(subject);
+   if (subject[size - 1] == '\n')
+   {
+      subject[size - 1] = '\0';
+      size--;
+   }
+
+   // prüft Länge des betreffs
+   if (size == 0 || size > 80)
+   {
+      fprintf(stderr, "Invalid subject length (must be 1-80 characters)\n");
+      return -1;
+   }
+
+   // Send betreff
+   snprintf(buffer, sizeof(buffer), "%s\n", subject);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send subject failed");
+      return -1;
+   }
+
+   // message vom user
+   printf("Message (end with a line containing only '.'):\n");
+   
+   while (1)
+   {
+      if (fgets(line, sizeof(line), stdin) == NULL)
+      {
+         fprintf(stderr, "Error reading message\n");
+         return -1;
+      }
+
+      // Checkt auf end marker und zeilenumbruch
+      if (strcmp(line, ".\n") == 0 || strcmp(line, ".") == 0)
+      {
+         // sendet den end marker
+         if (send(socket, ".\n", 2, 0) == -1)
+         {
+            perror("send end marker failed");
+            return -1;
+         }
+         break;
+      }
+      // Sendet Nachricht als zeile
+      if (send(socket, line, strlen(line), 0) == -1)
+      {
+         perror("send message line failed");
+         return -1;
+      }
+   }
+
+   // Antwort vom Server abwarten
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size == -1)
+   {
+      perror("recv response failed");
+      return -1;
+   }
+   else if (size == 0)
+   {
+      printf("Server closed connection\n");
+      return -1;
+   }
+   else
+   {
+      buffer[size] = '\0';
+      printf("<< %s", buffer);
+      
+      // überprüfen auf error 
+      if (strncmp(buffer, "OK", 2) == 0)
+      {
+         return 0; // Success
+      }
+      else
+      {
+         return -1; // Error
+      }
+   }
 }
