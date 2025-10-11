@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -18,6 +19,7 @@
 int handleSendCommand(int socket);
 int handleListCommand(int socket);
 int handleReadCommand(int socket);
+ssize_t readline(int fd, void *vptr, size_t maxlen);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -89,11 +91,10 @@ int main(int argc, char **argv)
 
    ////////////////////////////////////////////////////////////////////////////
    // RECEIVE DATA
-   // https://man7.org/linux/man-pages/man2/recv.2.html
-   size = recv(create_socket, buffer, BUF - 1, 0);
+   size = readline(create_socket, buffer, BUF - 1);
    if (size == -1)
    {
-      perror("recv error");
+      perror("readline error");
    }
    else if (size == 0)
    {
@@ -101,7 +102,6 @@ int main(int argc, char **argv)
    }
    else
    {
-      buffer[size] = '\0';
       printf("%s", buffer); // ignore error
    }
 
@@ -192,10 +192,10 @@ int main(int argc, char **argv)
          //             server if already processed.
          // solution 2: add an infrastructure component for messaging (broker)
          //
-         size = recv(create_socket, buffer, BUF - 1, 0);
+         size = readline(create_socket, buffer, BUF - 1);
          if (size == -1)
          {
-            perror("recv error");
+            perror("readline error");
             break;
          }
          else if (size == 0)
@@ -205,7 +205,6 @@ int main(int argc, char **argv)
          }
          else
          {
-            buffer[size] = '\0';
             printf("<< %s", buffer); // ignore error
          }
       }
@@ -339,10 +338,10 @@ int handleSendCommand(int socket)
    }
 
    // Antwort vom Server abwarten
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size == -1)
    {
-      perror("recv response failed");
+      perror("readline response failed");
       return -1;
    }
    else if (size == 0)
@@ -352,7 +351,6 @@ int handleSendCommand(int socket)
    }
    else
    {
-      buffer[size] = '\0';
       printf("<< %s", buffer);
 
       // überprüfen auf error
@@ -421,10 +419,10 @@ int handleListCommand(int socket)
    }
 
    // bekommt count der nachrichten
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size == -1)
    {
-      perror("recv count failed");
+      perror("readline count failed");
       return -1;
    }
    else if (size == 0)
@@ -432,8 +430,6 @@ int handleListCommand(int socket)
       printf("Server closed connection\n");
       return -1;
    }
-
-   buffer[size] = '\0';
 
    // wandelt count in integer um
    int messageCount = atoi(buffer);
@@ -445,47 +441,20 @@ int handleListCommand(int socket)
       return 0;
    }
 
-   // subjects empfangen und anzeigen
-   char *ptr = buffer;
-   int remaining = size;
-
-   // count line überspringen
-   while (*ptr != '\n' && remaining > 0)
+   // subjects zeilenweise empfangen und anzeigen
+   for (int i = 1; i <= messageCount; i++)
    {
-      ptr++;
-      remaining--;
-   }
-   if (remaining > 0)
-   {
-      ptr++; // newline überspringen
-      remaining--;
-   }
-
-   // subjects anzeigen
-   int lineNum = 1;
-   char *lineStart = ptr;
-
-   while (remaining > 0)
-   {
-      if (*ptr == '\n')
+      size = readline(socket, buffer, BUF - 1);
+      if (size <= 0)
       {
-         *ptr = '\0';
-         printf("  %d. %s\n", lineNum++, lineStart);
-         ptr++;
-         remaining--;
-         lineStart = ptr;
+         break;
       }
-      else
+      // Remove newline
+      if (size > 0 && buffer[size - 1] == '\n')
       {
-         ptr++;
-         remaining--;
+         buffer[size - 1] = '\0';
       }
-   }
-
-   // printe last line wenn kein newline am ende existiert
-   if (lineStart < ptr && *lineStart != '\0')
-   {
-      printf("  %d. %s\n", lineNum, lineStart);
+      printf("  %d. %s\n", i, buffer);
    }
 
    return 0;
@@ -561,10 +530,10 @@ int handleReadCommand(int socket)
    }
 
    // Receive response
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size == -1)
    {
-      perror("recv response failed");
+      perror("readline response failed");
       return -1;
    }
    else if (size == 0)
@@ -572,8 +541,6 @@ int handleReadCommand(int socket)
       printf("Server closed connection\n");
       return -1;
    }
-
-   buffer[size] = '\0';
 
    // Check if OK or ERR
    if (strncmp(buffer, "ERR", 3) == 0)
@@ -585,17 +552,58 @@ int handleReadCommand(int socket)
    // Print OK line
    printf("<< %s", buffer);
 
-   // Receive and print message content
+   // empfängt nachricht zeilenweise bis zum end marker
    while (1)
    {
-      size = recv(socket, buffer, BUF - 1, 0);
+      size = readline(socket, buffer, BUF - 1);
       if (size <= 0)
       {
          break;
       }
-      buffer[size] = '\0';
+
+      // end marker check
+      if (strcmp(buffer, ".\n") == 0 || strcmp(buffer, ".") == 0)
+      {
+         break;
+      }
+
       printf("%s", buffer);
    }
 
    return 0;
+}
+
+// readline() - Stevens Implementation from PDF
+ssize_t readline(int fd, void *vptr, size_t maxlen)
+{
+   ssize_t n, rc;
+   char c, *ptr;
+
+   ptr = vptr;
+   for (n = 1; n < maxlen; n++)
+   {
+again:
+      if ((rc = read(fd, &c, 1)) == 1)
+      {
+         *ptr++ = c;
+         if (c == '\n')
+            break; // newline is stored, like fgets()
+      }
+      else if (rc == 0)
+      {
+         if (n == 1)
+            return (0); // EOF, no data read
+         else
+            break; // EOF, some data was read
+      }
+      else
+      {
+         if (errno == EINTR)
+            goto again;
+         return (-1); // error, errno set by read()
+      }
+   }
+
+   *ptr = 0; // null terminate like fgets()
+   return (n);
 }

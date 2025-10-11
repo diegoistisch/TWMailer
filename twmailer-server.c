@@ -31,6 +31,7 @@ int handleSend(int socket);
 int handleList(int socket);
 int handleRead(int socket);
 int getNextMessageNumber(const char *userDir);
+ssize_t readline(int fd, void *buffer, size_t n);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -361,23 +362,19 @@ int handleSend(int socket)
    memset(message, 0, sizeof(message));
 
    // Receive username
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("recv username failed");
+      perror("readline username failed");
       return -1;
    }
-   
+
    // Remove newline
-   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   if (size > 0 && buffer[size - 1] == '\n')
    {
-      size -= 2;
+      buffer[size - 1] = '\0';
+      size--;
    }
-   else if (buffer[size - 1] == '\n')
-   {
-      --size;
-   }
-   buffer[size] = '\0';
 
    // Validate username (max 8 characters)
    if (size > 8 || size == 0)
@@ -390,23 +387,19 @@ int handleSend(int socket)
    printf("Username: %s\n", username);
 
    // Receive subject
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("recv subject failed");
+      perror("readline subject failed");
       return -1;
    }
 
    // Remove newline
-   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   if (size > 0 && buffer[size - 1] == '\n')
    {
-      size -= 2;
+      buffer[size - 1] = '\0';
+      size--;
    }
-   else if (buffer[size - 1] == '\n')
-   {
-      --size;
-   }
-   buffer[size] = '\0';
 
    // Validate subject (max 80 characters)
    if (size > 80 || size == 0)
@@ -418,28 +411,25 @@ int handleSend(int socket)
    subject[sizeof(subject) - 1] = '\0';
    printf("Subject: %s\n", subject);
 
+   // empfängt nachrichten
    int messageLen = 0;
    while (1)
    {
-      size = recv(socket, buffer, BUF - 1, 0);
+      size = readline(socket, buffer, BUF - 1);
       if (size <= 0)
       {
-         perror("recv message failed");
+         perror("readline message failed");
          return -1;
       }
 
       // Remove newline
-      if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+      if (size > 0 && buffer[size - 1] == '\n')
       {
-         size -= 2;
+         buffer[size - 1] = '\0';
+         size--;
       }
-      else if (buffer[size - 1] == '\n')
-      {
-         --size;
-      }
-      buffer[size] = '\0';
 
-      // Ccheckt für den End-of-message Marker
+      // Checkt für den End Marker
       if (strcmp(buffer, ".") == 0)
       {
          break;
@@ -532,23 +522,19 @@ int handleList(int socket)
    memset(response, 0, sizeof(response));
 
    // username empfangen
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("recv username failed");
+      perror("readline username failed");
       return -1;
    }
 
    // Remove newline
-   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   if (size > 0 && buffer[size - 1] == '\n')
    {
-      size -= 2;
+      buffer[size - 1] = '\0';
+      size--;
    }
-   else if (buffer[size - 1] == '\n')
-   {
-      --size;
-   }
-   buffer[size] = '\0';
 
    // username prüfen
    if (size > 8 || size == 0)
@@ -666,25 +652,21 @@ int handleRead(int socket)
    char line[BUF];
 
    // Receive username
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("recv username failed");
+      perror("readline username failed");
       return -1;
    }
 
    // Remove newline
-   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   if (size > 0 && buffer[size - 1] == '\n')
    {
-      size -= 2;
+      buffer[size - 1] = '\0';
+      size--;
    }
-   else if (buffer[size - 1] == '\n')
-   {
-      --size;
-   }
-   buffer[size] = '\0';
 
-   // Validate username
+   // Validiert username
    if (size > 8 || size == 0)
    {
       fprintf(stderr, "Invalid username length: %d\n", size);
@@ -694,23 +676,19 @@ int handleRead(int socket)
    username[sizeof(username) - 1] = '\0';
 
    // Receive message number
-   size = recv(socket, buffer, BUF - 1, 0);
+   size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("recv message number failed");
+      perror("readline message number failed");
       return -1;
    }
 
    // Remove newline
-   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   if (size > 0 && buffer[size - 1] == '\n')
    {
-      size -= 2;
+      buffer[size - 1] = '\0';
+      size--;
    }
-   else if (buffer[size - 1] == '\n')
-   {
-      --size;
-   }
-   buffer[size] = '\0';
 
    messageNum = atoi(buffer);
    if (messageNum <= 0)
@@ -749,9 +727,52 @@ int handleRead(int socket)
       }
    }
 
+   // Schickt end marker
+   if (send(socket, ".\n", 2, 0) == -1)
+   {
+      perror("send end marker failed");
+      fclose(file);
+      return -1;
+   }
+
    fclose(file);
    printf("Message %d sent to client (user: %s)\n", messageNum, username);
    return 0;
+}
+
+// readline() - Stevens Implementation from PDF
+ssize_t readline(int fd, void *vptr, size_t maxlen)
+{
+   ssize_t n, rc;
+   char c, *ptr;
+
+   ptr = vptr;
+   for (n = 1; n < maxlen; n++)
+   {
+again:
+      if ((rc = read(fd, &c, 1)) == 1)
+      {
+         *ptr++ = c;
+         if (c == '\n')
+            break; // newline is stored, like fgets()
+      }
+      else if (rc == 0)
+      {
+         if (n == 1)
+            return (0); // EOF, no data read
+         else
+            break; // EOF, some data was read
+      }
+      else
+      {
+         if (errno == EINTR)
+            goto again;
+         return (-1); // error, errno set by read()
+      }
+   }
+
+   *ptr = 0; // null terminate like fgets()
+   return (n);
 }
 
 void signalHandler(int sig)
