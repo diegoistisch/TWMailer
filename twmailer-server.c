@@ -28,6 +28,7 @@ char *mailSpoolDir = NULL;
 void *clientCommunication(void *data);
 void signalHandler(int sig);
 int handleSend(int socket);
+int handleList(int socket);
 int getNextMessageNumber(const char *userDir);
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -246,11 +247,12 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "LIST") == 0)
       {
-         // TODO: LIST
-         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         if (handleList(*current_socket) == -1)
          {
-            perror("send answer failed");
-            return NULL;
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
          }
       }
       else if (strcmp(buffer, "READ") == 0)
@@ -414,7 +416,6 @@ int handleSend(int socket)
    subject[sizeof(subject) - 1] = '\0';
    printf("Subject: %s\n", subject);
 
-   // 
    int messageLen = 0;
    while (1)
    {
@@ -499,6 +500,154 @@ int handleSend(int socket)
       return -1;
    }
 
+   return 0;
+}
+
+// Funktion um den LIST command zu verarbeiten
+// Format:
+// LIST
+// username
+// 
+// Response:
+// count
+// subject1
+// subject2
+// ...
+int handleList(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   char userDir[512];
+   char filePath[1024];
+   int size;
+   DIR *dir;
+   struct dirent *entry;
+   int messageCount = 0;
+   char response[BUF * 10];
+   int responseLen = 0;
+
+   memset(username, 0, sizeof(username));
+   memset(response, 0, sizeof(response));
+
+   // username empfangen
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size <= 0)
+   {
+      perror("recv username failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   {
+      size -= 2;
+   }
+   else if (buffer[size - 1] == '\n')
+   {
+      --size;
+   }
+   buffer[size] = '\0';
+
+   // username prüfen
+   if (size > 8 || size == 0)
+   {
+      fprintf(stderr, "Invalid username length: %d\n", size);
+      return -1;
+   }
+   
+   strncpy(username, buffer, sizeof(username) - 1);
+   username[sizeof(username) - 1] = '\0';
+   printf("LIST command for user: %s\n", username);
+
+   // Benutzerverzeichnis-Pfad erstellen
+   snprintf(userDir, sizeof(userDir), "%s/%s", mailSpoolDir, username);
+
+   // Verzeichnis öffnen
+   dir = opendir(userDir);
+   if (dir == NULL)
+   {
+      // Benutzerverzeichnis existiert nicht - 0 Nachrichten zurückgeben
+      printf("User directory not found, returning 0 messages\n");
+      if (send(socket, "0\n", 2, 0) == -1)
+      {
+         perror("send 0 count failed");
+         return -1;
+      }
+      return 0;
+   }
+
+
+   // Liest alle .txt Dateien und zählt sie
+   while ((entry = readdir(dir)) != NULL)
+   {
+      if (strstr(entry->d_name, ".txt") != NULL)
+      {
+         messageCount++;
+      }
+   }
+   closedir(dir);
+
+   printf("Found %d messages for user %s\n", messageCount, username);
+
+   // erstellt response mit count
+   responseLen = snprintf(response, sizeof(response), "%d\n", messageCount);
+
+   // öffent verzeichnis erneut um subjects zu lesen
+   dir = opendir(userDir);
+   if (dir == NULL)
+   {
+      perror("re-opendir failed");
+      return -1;
+   }
+
+   // liest alle .txt dateien und extrahiert subjects
+   while ((entry = readdir(dir)) != NULL)
+   {
+      // Überprüfen ob es sich um eine .txt Datei handelt
+      if (strstr(entry->d_name, ".txt") != NULL)
+      {
+         // file path
+         snprintf(filePath, sizeof(filePath), "%s/%s", userDir, entry->d_name);
+
+         // öffnet datei und liest subject (zweite zeile)
+         FILE *file = fopen(filePath, "r");
+         if (file != NULL)
+         {
+            char line[BUF];
+            // skip erste zeile (username)
+            if (fgets(line, sizeof(line), file) != NULL)
+            {
+               // liest zweite zeile (subject)
+               if (fgets(line, sizeof(line), file) != NULL)
+               {
+                  // newLine entfernen
+                  size_t len = strlen(line);
+                  if (len > 0 && line[len - 1] == '\n')
+                  {
+                     line[len - 1] = '\0';
+                  }
+
+                  // subject zur response hinzufügen
+                  int addLen = snprintf(response + responseLen, 
+                                       sizeof(response) - responseLen, 
+                                       "%s\n", line);
+                  responseLen += addLen;
+               }
+            }
+            fclose(file);
+         }
+      }
+   }
+   closedir(dir);
+
+   // Send response
+   if (send(socket, response, responseLen, 0) == -1)
+   {
+      perror("send LIST response failed");
+      return -1;
+   }
+
+   printf("LIST response sent (%d bytes)\n", responseLen);
    return 0;
 }
 

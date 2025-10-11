@@ -16,6 +16,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 int handleSendCommand(int socket);
+int handleListCommand(int socket);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -131,6 +132,18 @@ int main(int argc, char **argv)
             if (handleSendCommand(create_socket) == -1)
             {
                fprintf(stderr, "<< SEND command failed\n");
+            }
+            continue; // Skip normal command processing
+         }
+
+         //////////////////////////////////////////////////////////////////////
+         // Check if LIST command
+         if (strcmp(buffer, "LIST") == 0)
+         {
+            // Handle LIST command specially
+            if (handleListCommand(create_socket) == -1)
+            {
+               fprintf(stderr, "<< LIST command failed\n");
             }
             continue; // Skip normal command processing
          }
@@ -340,4 +353,128 @@ int handleSendCommand(int socket)
          return -1; // Error
       }
    }
+}
+
+// funktion um den LIST command zu verarbeiten
+// Format:
+// LIST
+// username
+// Response:
+// count
+// subject1
+// subject2
+// ...
+int handleListCommand(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   int size;
+
+   // Send LIST command
+   if (send(socket, "LIST\n", 5, 0) == -1)
+   {
+      perror("send LIST command failed");
+      return -1;
+   }
+
+   // Get username von user
+   printf("Username: ");
+   if (fgets(username, sizeof(username), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading username\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(username);
+   if (username[size - 1] == '\n')
+   {
+      username[size - 1] = '\0';
+      size--;
+   }
+
+   // usernamen prüfen auf länge
+   if (size == 0 || size > 8)
+   {
+      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
+      return -1;
+   }
+
+   // Send username with newline
+   snprintf(buffer, sizeof(buffer), "%s\n", username);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send username failed");
+      return -1;
+   }
+
+   // bekommt count der nachrichten
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size == -1)
+   {
+      perror("recv count failed");
+      return -1;
+   }
+   else if (size == 0)
+   {
+      printf("Server closed connection\n");
+      return -1;
+   }
+
+   buffer[size] = '\0';
+   
+   // wandelt count in integer um
+   int messageCount = atoi(buffer);
+   printf("<< %d message(s)\n", messageCount);
+
+   // prüft ob es noch nachrichten gibt
+   if (messageCount == 0)
+   {
+      return 0;
+   }
+
+   // subjects empfangen und anzeigen
+   char *ptr = buffer;
+   int remaining = size;
+   
+   // count line überspringen
+   while (*ptr != '\n' && remaining > 0)
+   {
+      ptr++;
+      remaining--;
+   }
+   if (remaining > 0)
+   {
+      ptr++; // newline überspringen
+      remaining--;
+   }
+
+   // subjects anzeigen
+   int lineNum = 1;
+   char *lineStart = ptr;
+   
+   while (remaining > 0)
+   {
+      if (*ptr == '\n')
+      {
+         *ptr = '\0';
+         printf("  %d. %s\n", lineNum++, lineStart);
+         ptr++;
+         remaining--;
+         lineStart = ptr;
+      }
+      else
+      {
+         ptr++;
+         remaining--;
+      }
+   }
+
+   // printe last line wenn kein newline am ende existiert
+   if (lineStart < ptr && *lineStart != '\0')
+   {
+      printf("  %d. %s\n", lineNum, lineStart);
+   }
+
+   return 0;
 }
