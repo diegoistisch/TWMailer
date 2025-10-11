@@ -17,6 +17,7 @@
 
 int handleSendCommand(int socket);
 int handleListCommand(int socket);
+int handleReadCommand(int socket);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -144,6 +145,17 @@ int main(int argc, char **argv)
             if (handleListCommand(create_socket) == -1)
             {
                fprintf(stderr, "<< LIST command failed\n");
+            }
+            continue; // Skip normal command processing
+         }
+
+         //////////////////////////////////////////////////////////////////////
+         // Check if READ command
+         if (strcmp(buffer, "READ") == 0)
+         {
+            if (handleReadCommand(create_socket) == -1)
+            {
+               fprintf(stderr, "<< READ command failed\n");
             }
             continue; // Skip normal command processing
          }
@@ -342,8 +354,8 @@ int handleSendCommand(int socket)
    {
       buffer[size] = '\0';
       printf("<< %s", buffer);
-      
-      // überprüfen auf error 
+
+      // überprüfen auf error
       if (strncmp(buffer, "OK", 2) == 0)
       {
          return 0; // Success
@@ -422,7 +434,7 @@ int handleListCommand(int socket)
    }
 
    buffer[size] = '\0';
-   
+
    // wandelt count in integer um
    int messageCount = atoi(buffer);
    printf("<< %d message(s)\n", messageCount);
@@ -436,7 +448,7 @@ int handleListCommand(int socket)
    // subjects empfangen und anzeigen
    char *ptr = buffer;
    int remaining = size;
-   
+
    // count line überspringen
    while (*ptr != '\n' && remaining > 0)
    {
@@ -452,7 +464,7 @@ int handleListCommand(int socket)
    // subjects anzeigen
    int lineNum = 1;
    char *lineStart = ptr;
-   
+
    while (remaining > 0)
    {
       if (*ptr == '\n')
@@ -474,6 +486,115 @@ int handleListCommand(int socket)
    if (lineStart < ptr && *lineStart != '\0')
    {
       printf("  %d. %s\n", lineNum, lineStart);
+   }
+
+   return 0;
+}
+
+// READ command handler
+int handleReadCommand(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   char messageNum[10];
+   int size;
+
+   // Send READ command
+   if (send(socket, "READ\n", 5, 0) == -1)
+   {
+      perror("send READ command failed");
+      return -1;
+   }
+
+   // Get username
+   printf("Username: ");
+   if (fgets(username, sizeof(username), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading username\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(username);
+   if (username[size - 1] == '\n')
+   {
+      username[size - 1] = '\0';
+      size--;
+   }
+
+   // Validate username
+   if (size == 0 || size > 8)
+   {
+      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
+      return -1;
+   }
+
+   // Send username
+   snprintf(buffer, sizeof(buffer), "%s\n", username);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send username failed");
+      return -1;
+   }
+
+   // Get message number
+   printf("Message number: ");
+   if (fgets(messageNum, sizeof(messageNum), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading message number\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(messageNum);
+   if (messageNum[size - 1] == '\n')
+   {
+      messageNum[size - 1] = '\0';
+   }
+
+   // Send message number
+   snprintf(buffer, sizeof(buffer), "%s\n", messageNum);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send message number failed");
+      return -1;
+   }
+
+   // Receive response
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size == -1)
+   {
+      perror("recv response failed");
+      return -1;
+   }
+   else if (size == 0)
+   {
+      printf("Server closed connection\n");
+      return -1;
+   }
+
+   buffer[size] = '\0';
+
+   // Check if OK or ERR
+   if (strncmp(buffer, "ERR", 3) == 0)
+   {
+      printf("<< %s", buffer);
+      return -1;
+   }
+
+   // Print OK line
+   printf("<< %s", buffer);
+
+   // Receive and print message content
+   while (1)
+   {
+      size = recv(socket, buffer, BUF - 1, 0);
+      if (size <= 0)
+      {
+         break;
+      }
+      buffer[size] = '\0';
+      printf("%s", buffer);
    }
 
    return 0;

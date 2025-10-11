@@ -29,6 +29,7 @@ void *clientCommunication(void *data);
 void signalHandler(int sig);
 int handleSend(int socket);
 int handleList(int socket);
+int handleRead(int socket);
 int getNextMessageNumber(const char *userDir);
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -257,11 +258,12 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "READ") == 0)
       {
-         // TODO: READ
-         if (send(*current_socket, "OK\n", 3, 0) == -1)
+         if (handleRead(*current_socket) == -1)
          {
-            perror("send answer failed");
-            return NULL;
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
          }
       }
       else if (strcmp(buffer, "DEL") == 0)
@@ -507,7 +509,7 @@ int handleSend(int socket)
 // Format:
 // LIST
 // username
-// 
+//
 // Response:
 // count
 // subject1
@@ -554,7 +556,7 @@ int handleList(int socket)
       fprintf(stderr, "Invalid username length: %d\n", size);
       return -1;
    }
-   
+
    strncpy(username, buffer, sizeof(username) - 1);
    username[sizeof(username) - 1] = '\0';
    printf("LIST command for user: %s\n", username);
@@ -628,8 +630,8 @@ int handleList(int socket)
                   }
 
                   // subject zur response hinzufügen
-                  int addLen = snprintf(response + responseLen, 
-                                       sizeof(response) - responseLen, 
+                  int addLen = snprintf(response + responseLen,
+                                       sizeof(response) - responseLen,
                                        "%s\n", line);
                   responseLen += addLen;
                }
@@ -648,6 +650,107 @@ int handleList(int socket)
    }
 
    printf("LIST response sent (%d bytes)\n", responseLen);
+   return 0;
+}
+
+// READ command handler
+// Format: READ\nusername\nmessage-number\n
+int handleRead(int socket)
+{
+   char buffer[BUF];
+   char username[9];
+   char filePath[300];
+   int messageNum;
+   int size;
+   FILE *file;
+   char line[BUF];
+
+   // Receive username
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size <= 0)
+   {
+      perror("recv username failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   {
+      size -= 2;
+   }
+   else if (buffer[size - 1] == '\n')
+   {
+      --size;
+   }
+   buffer[size] = '\0';
+
+   // Validate username
+   if (size > 8 || size == 0)
+   {
+      fprintf(stderr, "Invalid username length: %d\n", size);
+      return -1;
+   }
+   strncpy(username, buffer, sizeof(username) - 1);
+   username[sizeof(username) - 1] = '\0';
+
+   // Receive message number
+   size = recv(socket, buffer, BUF - 1, 0);
+   if (size <= 0)
+   {
+      perror("recv message number failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (buffer[size - 2] == '\r' && buffer[size - 1] == '\n')
+   {
+      size -= 2;
+   }
+   else if (buffer[size - 1] == '\n')
+   {
+      --size;
+   }
+   buffer[size] = '\0';
+
+   messageNum = atoi(buffer);
+   if (messageNum <= 0)
+   {
+      fprintf(stderr, "Invalid message number: %s\n", buffer);
+      return -1;
+   }
+
+   // Build file path
+   snprintf(filePath, sizeof(filePath), "%s/%s/%d.txt", mailSpoolDir, username, messageNum);
+
+   // Open and read file
+   file = fopen(filePath, "r");
+   if (file == NULL)
+   {
+      perror("fopen failed");
+      return -1;
+   }
+
+   // Send OK
+   if (send(socket, "OK\n", 3, 0) == -1)
+   {
+      perror("send OK failed");
+      fclose(file);
+      return -1;
+   }
+
+   // Send file content line by line
+   while (fgets(line, sizeof(line), file) != NULL)
+   {
+      if (send(socket, line, strlen(line), 0) == -1)
+      {
+         perror("send file content failed");
+         fclose(file);
+         return -1;
+      }
+   }
+
+   fclose(file);
+   printf("Message %d sent to client (user: %s)\n", messageNum, username);
    return 0;
 }
 
