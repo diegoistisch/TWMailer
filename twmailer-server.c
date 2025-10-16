@@ -506,7 +506,6 @@ int handleSend(int socket)
 // count
 // subject1
 // subject2
-// ...
 int handleList(int socket)
 {
    char buffer[BUF];

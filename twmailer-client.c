@@ -126,7 +126,6 @@ int main(int argc, char **argv)
          
          isQuit = strcmp(buffer, "QUIT") == 0;
 
-         //////////////////////////////////////////////////////////////////////
          // Check if SEND command
          if (strcmp(buffer, "SEND") == 0)
          {
@@ -138,7 +137,6 @@ int main(int argc, char **argv)
             continue; // Skip normal command processing
          }
 
-         //////////////////////////////////////////////////////////////////////
          // Check if LIST command
          if (strcmp(buffer, "LIST") == 0)
          {
@@ -150,7 +148,6 @@ int main(int argc, char **argv)
             continue; // Skip normal command processing
          }
 
-         //////////////////////////////////////////////////////////////////////
          // Check if READ command
          if (strcmp(buffer, "READ") == 0)
          {
@@ -161,7 +158,6 @@ int main(int argc, char **argv)
             continue; // Skip normal command processing
          }
 
-         //////////////////////////////////////////////////////////////////////
          // Check if DEL command
          if (strcmp(buffer, "DEL") == 0)
          {
@@ -377,15 +373,15 @@ int handleSendCommand(int socket)
    }
 }
 
-// funktion um den LIST command zu verarbeiten
+// Funktion um den LIST command zu verarbeiten
 // Format:
 // LIST
 // username
+//
 // Response:
 // count
 // subject1
 // subject2
-// ...
 int handleListCommand(int socket)
 {
    char buffer[BUF];
