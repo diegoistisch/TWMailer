@@ -21,6 +21,7 @@ int handleListCommand(int socket);
 int handleReadCommand(int socket);
 int handleDelCommand(int socket);
 ssize_t readline(int fd, void *vptr, size_t maxlen);
+int isValidUsername(const char *username);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -241,7 +242,8 @@ int main(int argc, char **argv)
 int handleSendCommand(int socket)
 {
    char buffer[BUF];
-   char username[9];
+   char sender[9];
+   char receiver[9];
    char subject[81];
    char line[BUF];
    int size;
@@ -253,34 +255,91 @@ int handleSendCommand(int socket)
       return -1;
    }
 
-   // schickt username des empfängers
-   printf("Username (max 8 characters): ");
-   if (fgets(username, sizeof(username), stdin) == NULL)
+   // Sender eingeben
+   printf("Sender (max 8 characters): ");
+   if (fgets(sender, sizeof(sender), stdin) == NULL)
    {
-      fprintf(stderr, "Error reading username\n");
+      fprintf(stderr, "Error reading sender\n");
       return -1;
    }
 
-   // löscht newline
-   size = strlen(username);
-   if (username[size - 1] == '\n')
+   // löscht newline und leert buffer wenn input zu lang war
+   size = strlen(sender);
+   if (sender[size - 1] == '\n')
    {
-      username[size - 1] = '\0';
+      sender[size - 1] = '\0';
       size--;
    }
+   else
+   {
+      // Input war zu lang, buffer leeren
+      int c;
+      while ((c = getchar()) != '\n' && c != EOF);
+   }
 
-   // prüft Länge des username
+   // prüft Länge des sender
    if (size == 0 || size > 8)
    {
-      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
+      fprintf(stderr, "Invalid sender length (must be 1-8 characters)\n");
       return -1;
    }
 
-   // Sendet den username
-   snprintf(buffer, sizeof(buffer), "%s\n", username);
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(sender))
+   {
+      fprintf(stderr, "Invalid sender: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
+   // Sendet den sender
+   snprintf(buffer, sizeof(buffer), "%s\n", sender);
    if (send(socket, buffer, strlen(buffer), 0) == -1)
    {
-      perror("send username failed");
+      perror("send sender failed");
+      return -1;
+   }
+
+   // Receiver eingeben
+   printf("Receiver (max 8 characters): ");
+   if (fgets(receiver, sizeof(receiver), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading receiver\n");
+      return -1;
+   }
+
+   // löscht newline und leert buffer wenn input zu lang war
+   size = strlen(receiver);
+   if (receiver[size - 1] == '\n')
+   {
+      receiver[size - 1] = '\0';
+      size--;
+   }
+   else
+   {
+      // Input war zu lang, buffer leeren
+      int c;
+      while ((c = getchar()) != '\n' && c != EOF);
+   }
+
+   // prüft Länge des receiver
+   if (size == 0 || size > 8)
+   {
+      fprintf(stderr, "Invalid receiver length (must be 1-8 characters)\n");
+      return -1;
+   }
+
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(receiver))
+   {
+      fprintf(stderr, "Invalid receiver: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
+   // Sendet den receiver
+   snprintf(buffer, sizeof(buffer), "%s\n", receiver);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send receiver failed");
       return -1;
    }
 
@@ -292,12 +351,18 @@ int handleSendCommand(int socket)
       return -1;
    }
 
-   // löscht newline
+   // löscht newline und leert buffer wenn input zu lang war
    size = strlen(subject);
    if (subject[size - 1] == '\n')
    {
       subject[size - 1] = '\0';
       size--;
+   }
+   else
+   {
+      // buffer leeren wenn nachricht zu lang
+      int c;
+      while ((c = getchar()) != '\n' && c != EOF);
    }
 
    // prüft Länge des betreffs
@@ -418,6 +483,13 @@ int handleListCommand(int socket)
       return -1;
    }
 
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
    // Send username with newline
    snprintf(buffer, sizeof(buffer), "%s\n", username);
    if (send(socket, buffer, strlen(buffer), 0) == -1)
@@ -503,6 +575,13 @@ int handleReadCommand(int socket)
    if (size == 0 || size > 8)
    {
       fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
+      return -1;
+   }
+
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
       return -1;
    }
 
@@ -622,6 +701,13 @@ int handleDelCommand(int socket)
       return -1;
    }
 
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
    // Send username
    snprintf(buffer, sizeof(buffer), "%s\n", username);
    if (send(socket, buffer, strlen(buffer), 0) == -1)
@@ -715,4 +801,24 @@ again:
 
    *ptr = 0; // null terminate like fgets()
    return (n);
+}
+
+// Validiert Username: nur a-z und 0-9 erlaubt
+int isValidUsername(const char *username)
+{
+   if (username == NULL || *username == '\0')
+   {
+      return 0; // leer
+   }
+
+   for (int i = 0; username[i] != '\0'; i++)
+   {
+      char c = username[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')))
+      {
+         return 0; // ungültiges Zeichen
+      }
+   }
+
+   return 1; // valid
 }

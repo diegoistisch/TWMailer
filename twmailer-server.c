@@ -33,6 +33,7 @@ int handleRead(int socket);
 int handleDel(int socket);
 int getNextMessageNumber(const char *userDir);
 ssize_t readline(int fd, void *buffer, size_t n);
+int isValidUsername(const char *username);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -363,11 +364,11 @@ int handleSend(int socket)
 
    memset(message, 0, sizeof(message));
 
-   // Receive username
+   // Receive sender
    size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("readline username failed");
+      perror("readline sender failed");
       return -1;
    }
 
@@ -378,15 +379,57 @@ int handleSend(int socket)
       size--;
    }
 
-   // Validate username (max 8 characters)
+   // Validate sender (max 8 characters)
    if (size > 8 || size == 0)
    {
-      fprintf(stderr, "Invalid username length: %d\n", size);
+      fprintf(stderr, "Invalid sender length: %d\n", size);
+      return -1;
+   }
+   char sender[9];
+   strncpy(sender, buffer, sizeof(sender) - 1);
+   sender[sizeof(sender) - 1] = '\0';
+
+   // prüft ob sender nur a-z und 0-9 enthält
+   if (!isValidUsername(sender))
+   {
+      fprintf(stderr, "Invalid sender: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
+   printf("Sender: %s\n", sender);
+
+   // Receive receiver (username)
+   size = readline(socket, buffer, BUF - 1);
+   if (size <= 0)
+   {
+      perror("readline receiver failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (size > 0 && buffer[size - 1] == '\n')
+   {
+      buffer[size - 1] = '\0';
+      size--;
+   }
+
+   // Validate receiver (max 8 characters)
+   if (size > 8 || size == 0)
+   {
+      fprintf(stderr, "Invalid receiver length: %d\n", size);
       return -1;
    }
    strncpy(username, buffer, sizeof(username) - 1);
    username[sizeof(username) - 1] = '\0';
-   printf("Username: %s\n", username);
+
+   // prüft ob receiver nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid receiver: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
+   printf("Receiver: %s\n", username);
 
    // Receive subject
    size = readline(socket, buffer, BUF - 1);
@@ -482,8 +525,8 @@ int handleSend(int socket)
       return -1;
    }
 
-   // formatiert nachricht im file
-   fprintf(file, "%s\n%s\n%s\n", username, subject, message);
+   // formatiert nachricht im file: sender, receiver, subject, message
+   fprintf(file, "%s\n%s\n%s\n%s\n", sender, username, subject, message);
    fclose(file);
 
    printf("Message saved to: %s\n", filePath);
@@ -546,6 +589,14 @@ int handleList(int socket)
 
    strncpy(username, buffer, sizeof(username) - 1);
    username[sizeof(username) - 1] = '\0';
+
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
    printf("LIST command for user: %s\n", username);
 
    // Benutzerverzeichnis-Pfad erstellen
@@ -676,6 +727,13 @@ int handleRead(int socket)
    strncpy(username, buffer, sizeof(username) - 1);
    username[sizeof(username) - 1] = '\0';
 
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
    // Receive message number
    size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
@@ -777,6 +835,14 @@ int handleDel(int socket)
    }
    strncpy(username, buffer, sizeof(username) - 1);
    username[sizeof(username) - 1] = '\0';
+
+   // prüft ob username nur a-z und 0-9 enthält
+   if (!isValidUsername(username))
+   {
+      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      return -1;
+   }
+
    printf("DEL command for user: %s\n", username);
 
    
@@ -905,4 +971,24 @@ void signalHandler(int sig)
    {
       exit(sig);
    }
+}
+
+// Validiert Username: nur a-z und 0-9 erlaubt
+int isValidUsername(const char *username)
+{
+   if (username == NULL || *username == '\0')
+   {
+      return 0; // leer
+   }
+
+   for (int i = 0; username[i] != '\0'; i++)
+   {
+      char c = username[i];
+      if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')))
+      {
+         return 0; // ungültiges Zeichen
+      }
+   }
+
+   return 1; // valid
 }
