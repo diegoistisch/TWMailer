@@ -16,6 +16,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
+int handleLoginCommand(int socket);
 int handleSendCommand(int socket);
 int handleListCommand(int socket);
 int handleReadCommand(int socket);
@@ -124,8 +125,18 @@ int main(int argc, char **argv)
             --size;
             buffer[size] = 0;
          }
-         
+
          isQuit = strcmp(buffer, "QUIT") == 0;
+
+         // Check if LOGIN command
+         if (strcmp(buffer, "LOGIN") == 0)
+         {
+            if (handleLoginCommand(create_socket) == -1)
+            {
+               fprintf(stderr, "<< LOGIN command failed\n");
+            }
+            continue;
+         }
 
          // Check if SEND command
          if (strcmp(buffer, "SEND") == 0)
@@ -174,12 +185,12 @@ int main(int argc, char **argv)
          // https://man7.org/linux/man-pages/man2/send.2.html
          // send will fail if connection is closed, but does not set
          // the error of send, but still the count of bytes sent
-         if ((send(create_socket, buffer, size + 1, 0)) == -1) 
+         if ((send(create_socket, buffer, size + 1, 0)) == -1)
          {
             // in case the server is gone offline we will still not enter
             // this part of code: see docs: https://linux.die.net/man/3/send
-            // >> Successful completion of a call to send() does not guarantee 
-            // >> delivery of the message. A return value of -1 indicates only 
+            // >> Successful completion of a call to send() does not guarantee
+            // >> delivery of the message. A return value of -1 indicates only
             // >> locally-detected errors.
             // ... but
             // to check the connection before send is sense-less because
@@ -192,9 +203,9 @@ int main(int argc, char **argv)
          //////////////////////////////////////////////////////////////////////
          // RECEIVE FEEDBACK
          // consider: reconnect handling might be appropriate in somes cases
-         //           How can we determine that the command sent was received 
-         //           or not? 
-         //           - Resend, might change state too often. 
+         //           How can we determine that the command sent was received
+         //           or not?
+         //           - Resend, might change state too often.
          //           - Else a command might have been lost.
          //
          // solution 1: adding meta-data (unique command id) and check on the
@@ -226,7 +237,7 @@ int main(int argc, char **argv)
       if (shutdown(create_socket, SHUT_RDWR) == -1)
       {
          // invalid in case the server is gone already
-         perror("shutdown create_socket"); 
+         perror("shutdown create_socket");
       }
       if (close(create_socket) == -1)
       {
@@ -238,11 +249,105 @@ int main(int argc, char **argv)
    return EXIT_SUCCESS;
 }
 
+// LOGIN command handler
+int handleLoginCommand(int socket)
+{
+   char buffer[BUF];
+   char username[128];
+   char password[256];
+   int size;
+
+   // Send LOGIN command
+   if (send(socket, "LOGIN\n", 6, 0) == -1)
+   {
+      perror("send LOGIN command failed");
+      return -1;
+   }
+
+   // Get username
+   printf("LDAP Username: ");
+   if (fgets(username, sizeof(username), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading username\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(username);
+   if (username[size - 1] == '\n')
+   {
+      username[size - 1] = '\0';
+      size--;
+   }
+
+   if (size == 0)
+   {
+      fprintf(stderr, "Username cannot be empty\n");
+      return -1;
+   }
+
+   // Send username
+   snprintf(buffer, sizeof(buffer), "%s\n", username);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send username failed");
+      return -1;
+   }
+
+   // Get password (Plaintext erlaubt?)
+   printf("Password: ");
+   if (fgets(password, sizeof(password), stdin) == NULL)
+   {
+      fprintf(stderr, "Error reading password\n");
+      return -1;
+   }
+
+   // Remove newline
+   size = strlen(password);
+   if (password[size - 1] == '\n')
+   {
+      password[size - 1] = '\0';
+   }
+
+   // Send password
+   snprintf(buffer, sizeof(buffer), "%s\n", password);
+   if (send(socket, buffer, strlen(buffer), 0) == -1)
+   {
+      perror("send password failed");
+      return -1;
+   }
+
+   // Receive response
+   size = readline(socket, buffer, BUF - 1);
+   if (size == -1)
+   {
+      perror("readline response failed");
+      return -1;
+   }
+   else if (size == 0)
+   {
+      printf("Server closed connection\n");
+      return -1;
+   }
+
+   printf("<< %s", buffer);
+
+   if (strncmp(buffer, "OK", 2) == 0)
+   {
+      printf("Login successful!\n");
+      return 0;
+   }
+   else
+   {
+      printf("Login failed!\n");
+      return -1;
+   }
+}
+
 // Verarbeitet den SEND command zwischen  user und server
 int handleSendCommand(int socket)
 {
    char buffer[BUF];
-   char sender[9];
    char receiver[9];
    char subject[81];
    char line[BUF];
@@ -255,49 +360,8 @@ int handleSendCommand(int socket)
       return -1;
    }
 
-   // Sender eingeben
-   printf("Sender (max 8 characters): ");
-   if (fgets(sender, sizeof(sender), stdin) == NULL)
-   {
-      fprintf(stderr, "Error reading sender\n");
-      return -1;
-   }
-
-   // löscht newline und leert buffer wenn input zu lang war
-   size = strlen(sender);
-   if (sender[size - 1] == '\n')
-   {
-      sender[size - 1] = '\0';
-      size--;
-   }
-   else
-   {
-      // Input war zu lang, buffer leeren
-      int c;
-      while ((c = getchar()) != '\n' && c != EOF);
-   }
-
-   // prüft Länge des sender
-   if (size == 0 || size > 8)
-   {
-      fprintf(stderr, "Invalid sender length (must be 1-8 characters)\n");
-      return -1;
-   }
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(sender))
-   {
-      fprintf(stderr, "Invalid sender: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
-
-   // Sendet den sender
-   snprintf(buffer, sizeof(buffer), "%s\n", sender);
-   if (send(socket, buffer, strlen(buffer), 0) == -1)
-   {
-      perror("send sender failed");
-      return -1;
-   }
+   // Sender wird automatisch aus Session genommen - nicht mehr eingeben
+   printf("(Sender will be set from your login session)\n");
 
    // Receiver eingeben
    printf("Receiver (max 8 characters): ");
@@ -318,7 +382,8 @@ int handleSendCommand(int socket)
    {
       // Input war zu lang, buffer leeren
       int c;
-      while ((c = getchar()) != '\n' && c != EOF);
+      while ((c = getchar()) != '\n' && c != EOF)
+         ;
    }
 
    // prüft Länge des receiver
@@ -362,7 +427,8 @@ int handleSendCommand(int socket)
    {
       // buffer leeren wenn nachricht zu lang
       int c;
-      while ((c = getchar()) != '\n' && c != EOF);
+      while ((c = getchar()) != '\n' && c != EOF)
+         ;
    }
 
    // prüft Länge des betreffs
@@ -382,7 +448,7 @@ int handleSendCommand(int socket)
 
    // message vom user
    printf("Message (end with a line containing only '.'):\n");
-   
+
    while (1)
    {
       if (fgets(line, sizeof(line), stdin) == NULL)
@@ -439,9 +505,9 @@ int handleSendCommand(int socket)
 }
 
 // Funktion um den LIST command zu verarbeiten
+// Pro Version: Username wird aus Session genommen
 // Format:
 // LIST
-// username
 //
 // Response:
 // count
@@ -450,7 +516,6 @@ int handleSendCommand(int socket)
 int handleListCommand(int socket)
 {
    char buffer[BUF];
-   char username[9];
    int size;
 
    // Send LIST command
@@ -460,43 +525,8 @@ int handleListCommand(int socket)
       return -1;
    }
 
-   // Get username von user
-   printf("Username: ");
-   if (fgets(username, sizeof(username), stdin) == NULL)
-   {
-      fprintf(stderr, "Error reading username\n");
-      return -1;
-   }
-
-   // Remove newline
-   size = strlen(username);
-   if (username[size - 1] == '\n')
-   {
-      username[size - 1] = '\0';
-      size--;
-   }
-
-   // usernamen prüfen auf länge
-   if (size == 0 || size > 8)
-   {
-      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
-      return -1;
-   }
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(username))
-   {
-      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
-
-   // Send username with newline
-   snprintf(buffer, sizeof(buffer), "%s\n", username);
-   if (send(socket, buffer, strlen(buffer), 0) == -1)
-   {
-      perror("send username failed");
-      return -1;
-   }
+   // Username wird automatisch aus Session genommen
+   printf("(Listing messages for your logged-in account)\n");
 
    // bekommt count der nachrichten
    size = readline(socket, buffer, BUF - 1);
@@ -541,10 +571,10 @@ int handleListCommand(int socket)
 }
 
 // READ command handler
+// Pro Version: Username wird aus Session genommen
 int handleReadCommand(int socket)
 {
    char buffer[BUF];
-   char username[9];
    char messageNum[10];
    int size;
 
@@ -555,43 +585,7 @@ int handleReadCommand(int socket)
       return -1;
    }
 
-   // Get username
-   printf("Username: ");
-   if (fgets(username, sizeof(username), stdin) == NULL)
-   {
-      fprintf(stderr, "Error reading username\n");
-      return -1;
-   }
-
-   // Remove newline
-   size = strlen(username);
-   if (username[size - 1] == '\n')
-   {
-      username[size - 1] = '\0';
-      size--;
-   }
-
-   // Validate username
-   if (size == 0 || size > 8)
-   {
-      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
-      return -1;
-   }
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(username))
-   {
-      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
-
-   // Send username
-   snprintf(buffer, sizeof(buffer), "%s\n", username);
-   if (send(socket, buffer, strlen(buffer), 0) == -1)
-   {
-      perror("send username failed");
-      return -1;
-   }
+   printf("(Reading message from your logged-in account)\n");
 
    // Get message number
    printf("Message number: ");
@@ -661,15 +655,12 @@ int handleReadCommand(int socket)
 }
 
 // DEL command handler
-// Löscht eine spezifische Nachricht
 int handleDelCommand(int socket)
 {
    char buffer[BUF];
-   char username[9];
    char messageNum[10];
    int size;
 
-   
    // Send DEL command
    if (send(socket, "DEL\n", 4, 0) == -1)
    {
@@ -677,46 +668,8 @@ int handleDelCommand(int socket)
       return -1;
    }
 
-   
-   // Get username
-   printf("Username: ");
-   if (fgets(username, sizeof(username), stdin) == NULL)
-   {
-      fprintf(stderr, "Error reading username\n");
-      return -1;
-   }
+   printf("(Deleting message from your logged-in account)\n");
 
-   // Remove newline
-   size = strlen(username);
-   if (username[size - 1] == '\n')
-   {
-      username[size - 1] = '\0';
-      size--;
-   }
-
-   // username prüfen
-   if (size == 0 || size > 8)
-   {
-      fprintf(stderr, "Invalid username length (must be 1-8 characters)\n");
-      return -1;
-   }
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(username))
-   {
-      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
-
-   // Send username
-   snprintf(buffer, sizeof(buffer), "%s\n", username);
-   if (send(socket, buffer, strlen(buffer), 0) == -1)
-   {
-      perror("send username failed");
-      return -1;
-   }
-
-   
    // Get message number
    printf("Message number: ");
    if (fgets(messageNum, sizeof(messageNum), stdin) == NULL)
@@ -740,7 +693,6 @@ int handleDelCommand(int socket)
       return -1;
    }
 
-   
    // Receive response
    size = readline(socket, buffer, BUF - 1);
    if (size == -1)
@@ -777,7 +729,7 @@ ssize_t readline(int fd, void *vptr, size_t maxlen)
    ptr = vptr;
    for (n = 1; n < maxlen; n++)
    {
-again:
+   again:
       if ((rc = read(fd, &c, 1)) == 1)
       {
          *ptr++ = c;

@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
+#include <ldap.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -23,10 +24,15 @@ int create_socket = -1;
 int new_socket = -1;
 char *mailSpoolDir = NULL;
 
+// Session-Daten (wird pro Client-Verbindung gesetzt)
+int isAuthenticated = 0;
+char sessionUsername[256]; // LDAP-Username nach Login
+
 ///////////////////////////////////////////////////////////////////////////////
 
 void *clientCommunication(void *data);
 void signalHandler(int sig);
+int handleLogin(int socket);
 int handleSend(int socket);
 int handleList(int socket);
 int handleRead(int socket);
@@ -192,6 +198,10 @@ void *clientCommunication(void *data)
    int size;
    int *current_socket = (int *)data;
 
+   // Session zurücksetzen für neue Verbindung
+   isAuthenticated = 0;
+   memset(sessionUsername, 0, sizeof(sessionUsername));
+
    ////////////////////////////////////////////////////////////////////////////
    // SEND welcome message
    strcpy(buffer, "Welcome to TWMailer!\r\n");
@@ -239,9 +249,27 @@ void *clientCommunication(void *data)
       printf("Command received: %s\n", buffer); // ignore error
 
       // COMMAND PARSING AB HIER
-      if (strcmp(buffer, "SEND") == 0)
+      if (strcmp(buffer, "LOGIN") == 0)
       {
-         if (handleSend(*current_socket) == -1)
+         if (handleLogin(*current_socket) == -1)
+         {
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
+         }
+      }
+      else if (strcmp(buffer, "SEND") == 0)
+      {
+         if (!isAuthenticated)
+         {
+            printf("SEND rejected - not authenticated\n");
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
+         }
+         else if (handleSend(*current_socket) == -1)
          {
             if (send(*current_socket, "ERR\n", 4, 0) == -1)
             {
@@ -251,7 +279,15 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "LIST") == 0)
       {
-         if (handleList(*current_socket) == -1)
+         if (!isAuthenticated)
+         {
+            printf("LIST rejected - not authenticated\n");
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
+         }
+         else if (handleList(*current_socket) == -1)
          {
             if (send(*current_socket, "ERR\n", 4, 0) == -1)
             {
@@ -261,7 +297,15 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "READ") == 0)
       {
-         if (handleRead(*current_socket) == -1)
+         if (!isAuthenticated)
+         {
+            printf("READ rejected - not authenticated\n");
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
+         }
+         else if (handleRead(*current_socket) == -1)
          {
             if (send(*current_socket, "ERR\n", 4, 0) == -1)
             {
@@ -271,7 +315,15 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "DEL") == 0)
       {
-         if (handleDel(*current_socket) == -1)
+         if (!isAuthenticated)
+         {
+            printf("DEL rejected - not authenticated\n");
+            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            {
+               perror("send error response failed");
+            }
+         }
+         else if (handleDel(*current_socket) == -1)
          {
             if (send(*current_socket, "ERR\n", 4, 0) == -1)
             {
@@ -311,7 +363,6 @@ void *clientCommunication(void *data)
    return NULL;
 }
 
-
 //  funktion um die nächste nachrichtennummer für einen benutzer zu bekommen
 int getNextMessageNumber(const char *userDir)
 {
@@ -323,7 +374,7 @@ int getNextMessageNumber(const char *userDir)
    dir = opendir(userDir);
    if (dir == NULL)
    {
-      return 1; 
+      return 1;
    }
 
    while ((entry = readdir(dir)) != NULL)
@@ -342,33 +393,24 @@ int getNextMessageNumber(const char *userDir)
    return maxNum + 1;
 }
 
-
-// funktion um den SEND command zu verarbeiten
-// format:
-// SEND
-// username
-// subject
-// message (mehrere zeilen)
-// .
-int handleSend(int socket)
+// LOGIN command handler mit LDAP-Authentifizierung
+int handleLogin(int socket)
 {
    char buffer[BUF];
-   char username[9]; // Max 8 characters + null terminator
-   char subject[81]; // Max 80 characters + null terminator
-   char message[BUF * 10]; // um längere nachrichten zu erlauben
-   char userDir[256];
-   char filePath[300];
+   char ldapUsername[128];
+   char ldapPassword[256];
    int size;
-   FILE *file;
-   int messageNum;
 
-   memset(message, 0, sizeof(message));
+   // LDAP Konfiguration
+   const char *ldapUri = "ldap://ldap.technikum-wien.at:389";
+   const int ldapVersion = LDAP_VERSION3;
+   char ldapBindUser[256];
 
-   // Receive sender
+   // Empfange Username
    size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
    {
-      perror("readline sender failed");
+      perror("readline username failed");
       return -1;
    }
 
@@ -379,24 +421,131 @@ int handleSend(int socket)
       size--;
    }
 
-   // Validate sender (max 8 characters)
-   if (size > 8 || size == 0)
+   if (size == 0 || size > 127)
    {
-      fprintf(stderr, "Invalid sender length: %d\n", size);
-      return -1;
-   }
-   char sender[9];
-   strncpy(sender, buffer, sizeof(sender) - 1);
-   sender[sizeof(sender) - 1] = '\0';
-
-   // prüft ob sender nur a-z und 0-9 enthält
-   if (!isValidUsername(sender))
-   {
-      fprintf(stderr, "Invalid sender: only lowercase letters (a-z) and digits (0-9) allowed\n");
+      fprintf(stderr, "Invalid username length\n");
       return -1;
    }
 
-   printf("Sender: %s\n", sender);
+   strncpy(ldapUsername, buffer, sizeof(ldapUsername) - 1);
+   ldapUsername[sizeof(ldapUsername) - 1] = '\0';
+   printf("LOGIN attempt for user: %s\n", ldapUsername);
+
+   // Empfange Password
+   size = readline(socket, buffer, BUF - 1);
+   if (size <= 0)
+   {
+      perror("readline password failed");
+      return -1;
+   }
+
+   // Remove newline
+   if (size > 0 && buffer[size - 1] == '\n')
+   {
+      buffer[size - 1] = '\0';
+      size--;
+   }
+
+   strncpy(ldapPassword, buffer, sizeof(ldapPassword) - 1);
+   ldapPassword[sizeof(ldapPassword) - 1] = '\0';
+
+   // LDAP Bind User DN erstellen
+   sprintf(ldapBindUser, "uid=%s,ou=people,dc=technikum-wien,dc=at", ldapUsername);
+   printf("LDAP bind DN: %s\n", ldapBindUser);
+
+   // LDAP Verbindung aufbauen
+   LDAP *ldapHandle;
+   int rc = ldap_initialize(&ldapHandle, ldapUri);
+   if (rc != LDAP_SUCCESS)
+   {
+      fprintf(stderr, "ldap_initialize failed: %s\n", ldap_err2string(rc));
+      return -1;
+   }
+   printf("Connected to LDAP server %s\n", ldapUri);
+
+   // LDAP Version setzen
+   rc = ldap_set_option(ldapHandle, LDAP_OPT_PROTOCOL_VERSION, &ldapVersion);
+   if (rc != LDAP_OPT_SUCCESS)
+   {
+      fprintf(stderr, "ldap_set_option(PROTOCOL_VERSION): %s\n", ldap_err2string(rc));
+      ldap_unbind_ext_s(ldapHandle, NULL, NULL);
+      return -1;
+   }
+
+   // TLS starten
+   rc = ldap_start_tls_s(ldapHandle, NULL, NULL);
+   if (rc != LDAP_SUCCESS)
+   {
+      fprintf(stderr, "ldap_start_tls_s(): %s\n", ldap_err2string(rc));
+      ldap_unbind_ext_s(ldapHandle, NULL, NULL);
+      return -1;
+   }
+
+   // LDAP Bind (Authentifizierung)
+   BerValue bindCredentials;
+   bindCredentials.bv_val = (char *)ldapPassword;
+   bindCredentials.bv_len = strlen(ldapPassword);
+   BerValue *servercredp;
+
+   rc = ldap_sasl_bind_s(
+       ldapHandle,
+       ldapBindUser,
+       LDAP_SASL_SIMPLE,
+       &bindCredentials,
+       NULL,
+       NULL,
+       &servercredp);
+
+   if (rc != LDAP_SUCCESS)
+   {
+      fprintf(stderr, "LDAP bind error: %s\n", ldap_err2string(rc));
+      ldap_unbind_ext_s(ldapHandle, NULL, NULL);
+      return -1;
+   }
+
+   // Authentifizierung erfolgreich!
+   printf("LDAP authentication successful for user: %s\n", ldapUsername);
+   ldap_unbind_ext_s(ldapHandle, NULL, NULL);
+
+   // Session-Daten setzen
+   isAuthenticated = 1;
+   strncpy(sessionUsername, ldapUsername, sizeof(sessionUsername) - 1);
+   sessionUsername[sizeof(sessionUsername) - 1] = '\0';
+
+   // Sende OK
+   if (send(socket, "OK\n", 3, 0) == -1)
+   {
+      perror("send OK failed");
+      return -1;
+   }
+
+   return 0;
+}
+
+// funktion um den SEND command zu verarbeiten
+// format (Pro Version):
+// SEND
+// <Receiver>
+// <Subject>
+// <message>
+// .
+// Sender wird automatisch aus Session gesetzt
+int handleSend(int socket)
+{
+   char buffer[BUF];
+   char username[9];       // Max 8 characters + null terminator
+   char subject[81];       // Max 80 characters + null terminator
+   char message[BUF * 10]; // um längere nachrichten zu erlauben
+   char userDir[256];
+   char filePath[300];
+   int size;
+   FILE *file;
+   int messageNum;
+
+   memset(message, 0, sizeof(message));
+
+   // Sender wird automatisch aus Session genommen
+   printf("Sender (from session): %s\n", sessionUsername);
 
    // Receive receiver (username)
    size = readline(socket, buffer, BUF - 1);
@@ -500,7 +649,7 @@ int handleSend(int socket)
 
    // Falls Benutzerverzeichnis noch nicht existiert, wird es erstellt
    snprintf(userDir, sizeof(userDir), "%s/%s", mailSpoolDir, username);
-   
+
    // Create directory mit permissions 0700
    if (mkdir(userDir, 0700) == -1)
    {
@@ -511,9 +660,8 @@ int handleSend(int socket)
       }
    }
 
-   
    messageNum = getNextMessageNumber(userDir);
-   
+
    // erstellt file path
    snprintf(filePath, sizeof(filePath), "%s/%d.txt", userDir, messageNum);
 
@@ -525,8 +673,8 @@ int handleSend(int socket)
       return -1;
    }
 
-   // formatiert nachricht im file: sender, receiver, subject, message
-   fprintf(file, "%s\n%s\n%s\n%s\n", sender, username, subject, message);
+   // formatiert nachricht im file: sender (aus session), receiver, subject, message
+   fprintf(file, "%s\n%s\n%s\n%s\n", sessionUsername, username, subject, message);
    fclose(file);
 
    printf("Message saved to: %s\n", filePath);
@@ -541,9 +689,9 @@ int handleSend(int socket)
 }
 
 // Funktion um den LIST command zu verarbeiten
-// Format:
+// Format (Pro Version):
 // LIST
-// username
+// (kein username mehr, wird aus Session genommen)
 //
 // Response:
 // count
@@ -551,62 +699,27 @@ int handleSend(int socket)
 // subject2
 int handleList(int socket)
 {
-   char buffer[BUF];
-   char username[9];
    char userDir[512];
    char filePath[1024];
-   int size;
    DIR *dir;
    struct dirent *entry;
    int messageCount = 0;
    char response[BUF * 10];
    int responseLen = 0;
 
-   memset(username, 0, sizeof(username));
    memset(response, 0, sizeof(response));
 
-   // username empfangen
-   size = readline(socket, buffer, BUF - 1);
-   if (size <= 0)
-   {
-      perror("readline username failed");
-      return -1;
-   }
+   // Username wird aus Session genommen
+   printf("LIST command for user (from session): %s\n", sessionUsername);
 
-   // Remove newline
-   if (size > 0 && buffer[size - 1] == '\n')
-   {
-      buffer[size - 1] = '\0';
-      size--;
-   }
-
-   // username prüfen
-   if (size > 8 || size == 0)
-   {
-      fprintf(stderr, "Invalid username length: %d\n", size);
-      return -1;
-   }
-
-   strncpy(username, buffer, sizeof(username) - 1);
-   username[sizeof(username) - 1] = '\0';
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(username))
-   {
-      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
-
-   printf("LIST command for user: %s\n", username);
-
-   // Benutzerverzeichnis-Pfad erstellen
-   snprintf(userDir, sizeof(userDir), "%s/%s", mailSpoolDir, username);
+   // Verzeichnis erstellen
+   snprintf(userDir, sizeof(userDir), "%s/%s", mailSpoolDir, sessionUsername);
 
    // Verzeichnis öffnen
    dir = opendir(userDir);
    if (dir == NULL)
    {
-      // Benutzerverzeichnis existiert nicht - 0 Nachrichten zurückgeben
+      // Benutzerverzeichnis existiert nicht, 0 Nachrichten zurückgeben
       printf("User directory not found, returning 0 messages\n");
       if (send(socket, "0\n", 2, 0) == -1)
       {
@@ -615,7 +728,6 @@ int handleList(int socket)
       }
       return 0;
    }
-
 
    // Liest alle .txt Dateien und zählt sie
    while ((entry = readdir(dir)) != NULL)
@@ -627,7 +739,7 @@ int handleList(int socket)
    }
    closedir(dir);
 
-   printf("Found %d messages for user %s\n", messageCount, username);
+   printf("Found %d messages for user %s\n", messageCount, sessionUsername);
 
    // erstellt response mit count
    responseLen = snprintf(response, sizeof(response), "%d\n", messageCount);
@@ -649,29 +761,33 @@ int handleList(int socket)
          // file path
          snprintf(filePath, sizeof(filePath), "%s/%s", userDir, entry->d_name);
 
-         // öffnet datei und liest subject (zweite zeile)
+         // öffnet datei und liest subject (dritte zeile)
          FILE *file = fopen(filePath, "r");
          if (file != NULL)
          {
             char line[BUF];
-            // skip erste zeile (username)
+            // skip erste zeile (sender)
             if (fgets(line, sizeof(line), file) != NULL)
             {
-               // liest zweite zeile (subject)
+               // skip zweite zeile (receiver)
                if (fgets(line, sizeof(line), file) != NULL)
                {
-                  // newLine entfernen
-                  size_t len = strlen(line);
-                  if (len > 0 && line[len - 1] == '\n')
+                  // liest dritte zeile (subject)
+                  if (fgets(line, sizeof(line), file) != NULL)
                   {
-                     line[len - 1] = '\0';
-                  }
+                     // newLine entfernen
+                     size_t len = strlen(line);
+                     if (len > 0 && line[len - 1] == '\n')
+                     {
+                        line[len - 1] = '\0';
+                     }
 
-                  // subject zur response hinzufügen
-                  int addLen = snprintf(response + responseLen,
-                                       sizeof(response) - responseLen,
-                                       "%s\n", line);
-                  responseLen += addLen;
+                     // subject zur response hinzufügen
+                     int addLen = snprintf(response + responseLen,
+                                           sizeof(response) - responseLen,
+                                           "%s\n", line);
+                     responseLen += addLen;
+                  }
                }
             }
             fclose(file);
@@ -692,47 +808,18 @@ int handleList(int socket)
 }
 
 // READ command handler
-// Format: READ\nusername\nmessage-number\n
+// Format (Pro Version): READ\nmessage-number\n
+// Username wird aus Session genommen
 int handleRead(int socket)
 {
    char buffer[BUF];
-   char username[9];
    char filePath[300];
    int messageNum;
    int size;
    FILE *file;
    char line[BUF];
 
-   // Receive username
-   size = readline(socket, buffer, BUF - 1);
-   if (size <= 0)
-   {
-      perror("readline username failed");
-      return -1;
-   }
-
-   // Remove newline
-   if (size > 0 && buffer[size - 1] == '\n')
-   {
-      buffer[size - 1] = '\0';
-      size--;
-   }
-
-   // Validiert username
-   if (size > 8 || size == 0)
-   {
-      fprintf(stderr, "Invalid username length: %d\n", size);
-      return -1;
-   }
-   strncpy(username, buffer, sizeof(username) - 1);
-   username[sizeof(username) - 1] = '\0';
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(username))
-   {
-      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
+   printf("READ command for user (from session): %s\n", sessionUsername);
 
    // Receive message number
    size = readline(socket, buffer, BUF - 1);
@@ -756,8 +843,8 @@ int handleRead(int socket)
       return -1;
    }
 
-   // Build file path
-   snprintf(filePath, sizeof(filePath), "%s/%s/%d.txt", mailSpoolDir, username, messageNum);
+   // Build file path mit sessionUsername
+   snprintf(filePath, sizeof(filePath), "%s/%s/%d.txt", mailSpoolDir, sessionUsername, messageNum);
 
    // Open and read file
    file = fopen(filePath, "r");
@@ -795,57 +882,22 @@ int handleRead(int socket)
    }
 
    fclose(file);
-   printf("Message %d sent to client (user: %s)\n", messageNum, username);
+   printf("Message %d sent to client (user: %s)\n", messageNum, sessionUsername);
    return 0;
 }
 
-
 // DEL command handler
-// Format: DEL\nusername\nmessage-number\n
-// Löscht eine spezifische Nachricht
+// Format (Pro Version): DEL\nmessage-number\n
+// Username wird aus Session genommen
 int handleDel(int socket)
 {
    char buffer[BUF];
-   char username[9];
    char filePath[300];
    int messageNum;
    int size;
 
-   
-   // Receive username
-   size = readline(socket, buffer, BUF - 1);
-   if (size <= 0)
-   {
-      perror("readline username failed");
-      return -1;
-   }
+   printf("DEL command for user (from session): %s\n", sessionUsername);
 
-   // Remove newline
-   if (size > 0 && buffer[size - 1] == '\n')
-   {
-      buffer[size - 1] = '\0';
-      size--;
-   }
-
-   // prüfe username (max 8 characters)
-   if (size > 8 || size == 0)
-   {
-      fprintf(stderr, "Invalid username length: %d\n", size);
-      return -1;
-   }
-   strncpy(username, buffer, sizeof(username) - 1);
-   username[sizeof(username) - 1] = '\0';
-
-   // prüft ob username nur a-z und 0-9 enthält
-   if (!isValidUsername(username))
-   {
-      fprintf(stderr, "Invalid username: only lowercase letters (a-z) and digits (0-9) allowed\n");
-      return -1;
-   }
-
-   printf("DEL command for user: %s\n", username);
-
-   
    // lese message number
    size = readline(socket, buffer, BUF - 1);
    if (size <= 0)
@@ -868,13 +920,11 @@ int handleDel(int socket)
       return -1;
    }
 
-   printf("Attempting to delete message %d for user %s\n", messageNum, username);
+   printf("Attempting to delete message %d for user %s\n", messageNum, sessionUsername);
 
-   
-   // Build file path
-   snprintf(filePath, sizeof(filePath), "%s/%s/%d.txt", mailSpoolDir, username, messageNum);
+   // Build file path mit sessionUsername
+   snprintf(filePath, sizeof(filePath), "%s/%s/%d.txt", mailSpoolDir, sessionUsername, messageNum);
 
-   
    // Versuche die Datei zu löschen
    if (unlink(filePath) == -1)
    {
@@ -882,9 +932,8 @@ int handleDel(int socket)
       return -1;
    }
 
-   printf("Message %d deleted successfully for user %s\n", messageNum, username);
+   printf("Message %d deleted successfully for user %s\n", messageNum, sessionUsername);
 
-   
    // Send OK wenn es funktioniert hat
    if (send(socket, "OK\n", 3, 0) == -1)
    {
@@ -904,7 +953,7 @@ ssize_t readline(int fd, void *vptr, size_t maxlen)
    ptr = vptr;
    for (n = 1; n < maxlen; n++)
    {
-again:
+   again:
       if ((rc = read(fd, &c, 1)) == 1)
       {
          *ptr++ = c;
