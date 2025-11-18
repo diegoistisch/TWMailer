@@ -472,6 +472,14 @@ int handleLogin(int socket)
       return -1;
    }
 
+   // TLS Zertifikatsvalidierung deaktivieren (für Entwicklung/Lernumgebung)
+   int tls_require_cert = LDAP_OPT_X_TLS_NEVER;
+   rc = ldap_set_option(NULL, LDAP_OPT_X_TLS_REQUIRE_CERT, &tls_require_cert);
+   if (rc != LDAP_OPT_SUCCESS)
+   {
+      fprintf(stderr, "ldap_set_option(TLS_REQUIRE_CERT): %s\n", ldap_err2string(rc));
+   }
+
    // TLS starten
    rc = ldap_start_tls_s(ldapHandle, NULL, NULL);
    if (rc != LDAP_SUCCESS)
