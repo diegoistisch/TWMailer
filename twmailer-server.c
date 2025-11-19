@@ -261,15 +261,15 @@ void *clientCommunication(void *data)
       }
       else if (strcmp(buffer, "SEND") == 0)
       {
-         if (!isAuthenticated)
+         if (!isAuthenticated) // prüft ob user eingeloggt ist
          {
-            printf("SEND rejected - not authenticated\n");
-            if (send(*current_socket, "ERR\n", 4, 0) == -1)
+            printf("SEND rejected - not authenticated\n"); 
+            if (send(*current_socket, "ERR\n", 4, 0) == -1) 
             {
                perror("send error response failed");
             }
          }
-         else if (handleSend(*current_socket) == -1)
+         else if (handleSend(*current_socket) == -1) // prüft ob SEND erfolgreich war
          {
             if (send(*current_socket, "ERR\n", 4, 0) == -1)
             {
@@ -346,7 +346,7 @@ void *clientCommunication(void *data)
       }
    } while (!abortRequested);
 
-   // closes/frees the descriptor if not already
+   // verbindung schließen 
    if (*current_socket != -1)
    {
       if (shutdown(*current_socket, SHUT_RDWR) == -1)
@@ -426,8 +426,9 @@ int handleLogin(int socket)
       fprintf(stderr, "Invalid username length\n");
       return -1;
    }
-
-   strncpy(ldapUsername, buffer, sizeof(ldapUsername) - 1);
+   
+   //username in ldap username buffer
+   strncpy(ldapUsername, buffer, sizeof(ldapUsername) - 1); 
    ldapUsername[sizeof(ldapUsername) - 1] = '\0';
    printf("LOGIN attempt for user: %s\n", ldapUsername);
 
@@ -446,6 +447,7 @@ int handleLogin(int socket)
       size--;
    }
 
+   // Passwort in ldap password buffer speichern
    strncpy(ldapPassword, buffer, sizeof(ldapPassword) - 1);
    ldapPassword[sizeof(ldapPassword) - 1] = '\0';
 
