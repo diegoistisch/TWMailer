@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <termios.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -23,6 +24,8 @@ int handleReadCommand(int socket);
 int handleDelCommand(int socket);
 ssize_t readline(int fd, void *vptr, size_t maxlen);
 int isValidUsername(const char *username);
+int getch();
+void getpass_masked(char *password, size_t maxlen);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -294,19 +297,13 @@ int handleLoginCommand(int socket)
       return -1;
    }
 
-   // Get password (Plaintext erlaubt?)
-   printf("Password: ");
-   if (fgets(password, sizeof(password), stdin) == NULL)
+      // Get password mit Masking
+   getpass_masked(password, sizeof(password));
+      
+   if (strlen(password) == 0)
    {
-      fprintf(stderr, "Error reading password\n");
+      fprintf(stderr, "Password cannot be empty\n");
       return -1;
-   }
-
-   // Remove newline
-   size = strlen(password);
-   if (password[size - 1] == '\n')
-   {
-      password[size - 1] = '\0';
    }
 
    // Send password
@@ -773,4 +770,49 @@ int isValidUsername(const char *username)
    }
 
    return 1; // valid
+}
+
+int getch()
+{
+   int ch;
+   struct termios t_old, t_new;
+   tcgetattr(STDIN_FILENO, &t_old);
+   t_new = t_old;
+   t_new.c_lflag &= ~(ICANON | ECHO);
+   tcsetattr(STDIN_FILENO, TCSANOW, &t_new);
+   ch = getchar();
+   tcsetattr(STDIN_FILENO, TCSANOW, &t_old);
+   return ch;
+}
+
+void getpass_masked(char *password, size_t maxlen)
+{
+   const char BACKSPACE = 127;
+   const char RETURN = 10;
+   unsigned char ch;
+   size_t len = 0;
+
+   printf("Password: ");
+   fflush(stdout);
+
+   while ((ch = getch()) != RETURN && len < maxlen - 1)
+   {
+      if (ch == BACKSPACE)
+      {
+         if (len > 0)
+         {
+            printf("\b \b");
+            fflush(stdout);
+            len--;
+         }
+      }
+      else
+      {
+         password[len++] = ch;
+         printf("*");
+         fflush(stdout);
+      }
+   }
+   password[len] = '\0';
+   printf("\n");
 }
