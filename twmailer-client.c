@@ -138,7 +138,7 @@ int main(int argc, char **argv)
             {
                fprintf(stderr, "<< LOGIN command failed\n");
             }
-            continue;
+            continue; 
          }
 
          // Check if SEND command
@@ -149,7 +149,7 @@ int main(int argc, char **argv)
             {
                fprintf(stderr, "<< SEND command failed\n");
             }
-            continue; // Skip normal command processing
+            continue; 
          }
 
          // Check if LIST command
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
             {
                fprintf(stderr, "<< LIST command failed\n");
             }
-            continue; // Skip normal command processing
+            continue; 
          }
 
          // Check if READ command
@@ -170,7 +170,7 @@ int main(int argc, char **argv)
             {
                fprintf(stderr, "<< READ command failed\n");
             }
-            continue; // Skip normal command processing
+            continue; 
          }
 
          // Check if DEL command
@@ -180,7 +180,7 @@ int main(int argc, char **argv)
             {
                fprintf(stderr, "<< DEL command failed\n");
             }
-            continue; // Skip normal command processing
+            continue; 
          }
 
          //////////////////////////////////////////////////////////////////////
@@ -772,6 +772,7 @@ int isValidUsername(const char *username)
    return 1; // valid
 }
 
+//um einen char ohne eingabe zu lesen
 int getch()
 {
    int ch;
@@ -785,6 +786,7 @@ int getch()
    return ch;
 }
 
+// Passwort Eingabe mit Maskierung
 void getpass_masked(char *password, size_t maxlen)
 {
    const char BACKSPACE = 127;
@@ -795,6 +797,7 @@ void getpass_masked(char *password, size_t maxlen)
    printf("Password: ");
    fflush(stdout);
 
+   // Eingabe lesen und mit '*' maskieren
    while ((ch = getch()) != RETURN && len < maxlen - 1)
    {
       if (ch == BACKSPACE)
@@ -808,8 +811,8 @@ void getpass_masked(char *password, size_t maxlen)
       }
       else
       {
-         password[len++] = ch;
-         printf("*");
+         password[len++] = ch; // speichert das Zeichen
+         printf("*");   // schreibt '*' statt des Zeichens
          fflush(stdout);
       }
    }
